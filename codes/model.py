@@ -18,6 +18,8 @@ from torch.utils.data import DataLoader
 
 from dataloader import TestDataset
 
+import sys
+
 class KGEModel(nn.Module):
     def __init__(self, model_name, nentity, nrelation, hidden_dim, gamma, 
                  double_entity_embedding=False, double_relation_embedding=False):
@@ -27,6 +29,15 @@ class KGEModel(nn.Module):
         self.nrelation = nrelation
         self.hidden_dim = hidden_dim
         self.epsilon = 2.0
+        self.train_positive_loss = []
+        self.train_negative_loss = []
+        self.train_loss = []
+        self.val_mrr = []
+        self.val_mr = []
+        self.val_hit1 = []
+        self.val_hit3 = []
+        self.val_hit10 = []
+
         
         self.gamma = nn.Parameter(
             torch.Tensor([gamma]), 
@@ -232,9 +243,18 @@ class KGEModel(nn.Module):
         
         #Make phases of entities and relations uniformly distributed in [-pi, pi]
 
+        # TODO: check if this is a right way to compute the score
         phase_head = head/(self.embedding_range.item()/pi)
-        phase_relation = relation/(self.embedding_range.item()/pi)
+        # phase_relation = relation/(self.embedding_range.item()/pi)
+        phase_relation_real = torch.cos(relation)
+        phase_relation_imag = torch.sin(relation)
+        phase_relation = torch.cat((phase_relation_real, phase_relation_imag), dim=2)
+
         phase_tail = tail/(self.embedding_range.item()/pi)
+
+        # print("Phase head shape:", phase_head.shape)
+        # print("Phase relation shape:", phase_relation.shape)
+        # print("Phase tail shape:", phase_tail.shape)
 
         if mode == 'head-batch':
             score = phase_head + (phase_relation - phase_tail)
@@ -307,6 +327,9 @@ class KGEModel(nn.Module):
             'negative_sample_loss': negative_sample_loss.item(),
             'loss': loss.item()
         }
+        model.train_positive_loss.append(positive_sample_loss.item())
+        model.train_negative_loss.append(negative_sample_loss.item())
+        model.train_loss.append(loss.item())
 
         return log
     
@@ -315,7 +338,7 @@ class KGEModel(nn.Module):
         '''
         Evaluate the model on test or valid datasets
         '''
-        
+
         model.eval()
         
         if args.countries:
@@ -424,5 +447,78 @@ class KGEModel(nn.Module):
             metrics = {}
             for metric in logs[0].keys():
                 metrics[metric] = sum([log[metric] for log in logs])/len(logs)
+                if metric == "MRR":
+                    model.val_mrr.append(metrics[metric])
+                elif metric == "MR":
+                    model.val_mr.append(metrics[metric])
+                elif metric == "HITS@1":
+                    model.val_hit1.append(metrics[metric])
+                elif metric == "HITS@3":
+                    model.val_hit3.append(metrics[metric])
+                elif metric == "HITS@10":
+                    model.val_hit10.append(metrics[metric])
 
+            # save the losses and metrics into a numpy array
+            # save metrics
+            np.save(f"{args.save_path}/val_mrr.npy", np.array(model.val_mrr))
+            np.save(f"{args.save_path}/val_mr.npy", np.array(model.val_mr))
+            np.save(f"{args.save_path}/val_hit1.npy", np.array(model.val_hit1))
+            np.save(f"{args.save_path}/val_hit3.npy", np.array(model.val_hit3))
+            np.save(f"{args.save_path}/val_hit10.npy", np.array(model.val_hit10))
+
+            # save losses
+            np.save(f"{args.save_path}/train_positive_loss.npy", np.array(model.train_positive_loss))
+            np.save(f"{args.save_path}/train_negative_loss.npy", np.array(model.train_negative_loss))
+            np.save(f"{args.save_path}/train_loss.npy", np.array(model.train_loss))
+        
         return metrics
+
+    @staticmethod
+    def generate_embeddings(model, args):
+        """
+        Generate and return entity and relation embeddings from the model.
+        """
+        model.eval()
+        with torch.no_grad():
+            # Get the embeddings (they are nn.Parameters, so no .weight attribute)
+            entity_embeddings = model.entity_embedding.detach()
+            relation_embeddings = model.relation_embedding.detach()
+            
+            # Move to CPU if using CUDA
+            if args.cuda:
+                entity_embeddings = entity_embeddings.cpu()
+                relation_embeddings = relation_embeddings.cpu()
+            
+            # Convert tensors to numpy arrays
+            entity_embeddings = entity_embeddings.numpy()
+            relation_embeddings = relation_embeddings.numpy()
+        
+        print(f"Entity embeddings shape: {entity_embeddings.shape}")
+        print(f"Relation embeddings shape: {relation_embeddings.shape}")
+
+        return entity_embeddings, relation_embeddings
+
+    @staticmethod
+    def normalize_entity_emd(model):
+        entity_embeddings = model.entity_embedding.detach().clone()
+
+        # Split into real and imaginary parts
+        num_entities, embedding_dim = entity_embeddings.shape
+        half_dim = embedding_dim // 2  # Since first half is real, second half is imaginary
+
+        real_part = entity_embeddings[:, :half_dim]
+        imag_part = entity_embeddings[:, half_dim:]
+
+        # Compute complex magnitude
+        norm = torch.sqrt(real_part**2 + imag_part**2 + 1e-10)  # Add small epsilon to avoid division by zero
+
+        # Normalize real and imaginary parts
+        real_part = real_part / norm
+        imag_part = imag_part / norm
+
+        # Recombine into a single tensor
+        normalized_embeddings = torch.cat([real_part, imag_part], dim=1)
+
+        # Update back into the model
+        model.entity_embedding.data = normalized_embeddings
+        return model

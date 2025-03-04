@@ -48,14 +48,14 @@ then
 
 echo "Start Evaluation on Valid Data Set......"
 
-CUDA_VISIBLE_DEVICES=$GPU_DEVICE python -u $CODE_PATH/run.py --do_valid --cuda -init $SAVE
-    
+CUDA_VISIBLE_DEVICES=$GPU_DEVICE python -u $CODE_PATH/run.py --do_valid --cuda -init $SAVE --save_path fb15k_237
+   
 elif [ $MODE == "test" ]
 then
 
 echo "Start Evaluation on Test Data Set......"
 
-CUDA_VISIBLE_DEVICES=$GPU_DEVICE python -u $CODE_PATH/run.py --do_test --cuda -init $SAVE
+CUDA_VISIBLE_DEVICES=$GPU_DEVICE python -u $CODE_PATH/run.py --do_test --cuda -init $SAVE  --save_path fb15k_237
 
 else
    echo "Unknown MODE" $MODE

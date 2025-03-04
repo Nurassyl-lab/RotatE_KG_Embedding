@@ -31,6 +31,8 @@ def parse_args(args=None):
     parser.add_argument('--do_train', action='store_true')
     parser.add_argument('--do_valid', action='store_true')
     parser.add_argument('--do_test', action='store_true')
+    parser.add_argument('--do_normalize', action='store_true')
+    parser.add_argument('--do_generate_embeddings', action='store_true', help='Generate embeddings for the given triples')
     parser.add_argument('--evaluate_train', action='store_true', help='Evaluate on training data')
     
     parser.add_argument('--countries', action='store_true', help='Use Countries S1/S2/S3 datasets')
@@ -159,8 +161,8 @@ def log_metrics(mode, step, metrics):
         
         
 def main(args):
-    if (not args.do_train) and (not args.do_valid) and (not args.do_test):
-        raise ValueError('one of train/val/test mode must be choosed.')
+    if (not args.do_train) and (not args.do_valid) and (not args.do_test) and (not args.do_generate_embeddings):
+        raise ValueError('one of train/val/test/generate_embeddings mode must be choosed.')
     
     if args.init_checkpoint:
         override_config(args)
@@ -242,6 +244,7 @@ def main(args):
             batch_size=args.batch_size,
             shuffle=True, 
             num_workers=max(1, args.cpu_num//2),
+            # num_workers=0,
             collate_fn=TrainDataset.collate_fn
         )
         
@@ -250,6 +253,7 @@ def main(args):
             batch_size=args.batch_size,
             shuffle=True, 
             num_workers=max(1, args.cpu_num//2),
+            # num_workers=0,
             collate_fn=TrainDataset.collate_fn
         )
         
@@ -303,7 +307,23 @@ def main(args):
         for step in range(init_step, args.max_steps):
             
             log = kge_model.train_step(kge_model, optimizer, train_iterator, args)
-            
+
+            # Log entity embeddings every 10000 steps
+            if step % 10000 == 0:
+                entity_embeddings = kge_model.entity_embedding.detach().cpu().numpy()
+                entity_embeddings = entity_embeddings[:, entity_embeddings.shape[1]//2:] + 1j*entity_embeddings[:, :entity_embeddings.shape[1]//2]
+                ent1 = entity_embeddings[0, :]
+                ent1000 = entity_embeddings[1000, :]
+                ent5000 = entity_embeddings[5000, :]
+
+                avg_feature_magnitude1 = np.mean(np.abs(ent1))
+                avg_feature_magnitude1000 = np.mean(np.abs(ent1000))
+                avg_feature_magnitude5000 = np.mean(np.abs(ent5000))
+
+                logging.info('Entity embeddings 1 at step %d: %s' % (step, avg_feature_magnitude1))
+                logging.info('Entity embeddings 1000 at step %d: %s' % (step, avg_feature_magnitude1000))
+                logging.info('Entity embeddings 5000 at step %d: %s' % (step, avg_feature_magnitude5000))
+
             training_logs.append(log)
             
             if step >= warm_up_steps:
@@ -349,6 +369,25 @@ def main(args):
     
     if args.do_test:
         logging.info('Evaluating on Test Dataset...')
+        
+        if args.do_normalize:
+            logging.info('Normalizing Entity Embeddings...')
+            # normalize entity embeddings
+            ent = kge_model.entity_embedding.detach().clone()
+            ent = ent.cpu().numpy()
+            print("\nMagnitude of entites 1, 1000, 3000")
+            print("Before")
+            print(np.mean(np.abs(ent[1, :ent.shape[1]//2] + 1j* ent[1, ent.shape[1]//2:])))
+            print(np.mean(np.abs(ent[1000, :ent.shape[1]//2] + 1j* ent[1000, ent.shape[1]//2:])))
+            print(np.mean(np.abs(ent[3000, :ent.shape[1]//2] + 1j* ent[3000, ent.shape[1]//2:])))
+            kge_model = kge_model.normalize_entity_emd(kge_model)
+            ent = kge_model.entity_embedding.detach().clone()
+            ent = ent.cpu().numpy()
+            print("\nAfter")
+            print(np.mean(np.abs(ent[1, :ent.shape[1]//2] + 1j* ent[1, ent.shape[1]//2:])))
+            print(np.mean(np.abs(ent[1000, :ent.shape[1]//2] + 1j* ent[1000, ent.shape[1]//2:])))
+            print(np.mean(np.abs(ent[3000, :ent.shape[1]//2] + 1j* ent[3000, ent.shape[1]//2:])))
+
         metrics = kge_model.test_step(kge_model, test_triples, all_true_triples, args)
         log_metrics('Test', step, metrics)
     
@@ -356,6 +395,12 @@ def main(args):
         logging.info('Evaluating on Training Dataset...')
         metrics = kge_model.test_step(kge_model, train_triples, all_true_triples, args)
         log_metrics('Test', step, metrics)
+
+    if args.do_generate_embeddings:
+        logging.info('Generating embeddings for the given triples...')
+        entity_embeddings, rel_embeddings = kge_model.generate_embeddings(kge_model, args)
+        np.save('RotatE_500_Entity_Embeddings_FB15k.npy', entity_embeddings)
+        np.save('RotatE_500_Relation_Embeddings_FB15k.npy', rel_embeddings)
         
 if __name__ == '__main__':
     main(parse_args())

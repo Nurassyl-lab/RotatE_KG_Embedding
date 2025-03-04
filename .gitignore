@@ -1,3 +1,10 @@
 checkpoint
 *.npy
 *.log
+images/
+*__pycache__/
+compare_embeddings.py
+del.py
+models/
+phase_diff.json
+show_performance.py
