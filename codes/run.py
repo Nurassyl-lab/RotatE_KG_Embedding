@@ -244,7 +244,6 @@ def main(args):
             batch_size=args.batch_size,
             shuffle=True, 
             num_workers=max(1, args.cpu_num//2),
-            # num_workers=0,
             collate_fn=TrainDataset.collate_fn
         )
         
@@ -253,7 +252,6 @@ def main(args):
             batch_size=args.batch_size,
             shuffle=True, 
             num_workers=max(1, args.cpu_num//2),
-            # num_workers=0,
             collate_fn=TrainDataset.collate_fn
         )
         
@@ -399,8 +397,8 @@ def main(args):
     if args.do_generate_embeddings:
         logging.info('Generating embeddings for the given triples...')
         entity_embeddings, rel_embeddings = kge_model.generate_embeddings(kge_model, args)
-        np.save('RotatE_500_Entity_Embeddings_FB15k.npy', entity_embeddings)
-        np.save('RotatE_500_Relation_Embeddings_FB15k.npy', rel_embeddings)
+        np.save('Embeddings/pRotatE_1000_Entity_Embeddings_FB15k_reduced_n10_deg1.npy', entity_embeddings)
+        np.save('Embeddings/pRotatE_1000_Relation_Embeddings_FB15k_reduced_n10_deg1.npy', rel_embeddings)
         
 if __name__ == '__main__':
     main(parse_args())

@@ -243,18 +243,10 @@ class KGEModel(nn.Module):
         
         #Make phases of entities and relations uniformly distributed in [-pi, pi]
 
-        # TODO: check if this is a right way to compute the score
         phase_head = head/(self.embedding_range.item()/pi)
-        # phase_relation = relation/(self.embedding_range.item()/pi)
-        phase_relation_real = torch.cos(relation)
-        phase_relation_imag = torch.sin(relation)
-        phase_relation = torch.cat((phase_relation_real, phase_relation_imag), dim=2)
-
+        phase_relation = relation/(self.embedding_range.item()/pi)
         phase_tail = tail/(self.embedding_range.item()/pi)
 
-        # print("Phase head shape:", phase_head.shape)
-        # print("Phase relation shape:", phase_relation.shape)
-        # print("Phase tail shape:", phase_tail.shape)
 
         if mode == 'head-batch':
             score = phase_head + (phase_relation - phase_tail)
