@@ -8,3 +8,4 @@ del.py
 models/
 phase_diff.json
 show_performance.py
+data/FB15k/FB15k_entity_degree.csv
