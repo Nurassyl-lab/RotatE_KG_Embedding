@@ -1,0 +1,10 @@
+/m/015ll	/games/game_genre/boardgames	/m/01lb5
+/m/02wxtgw	/computer/software/license	/m/012k_9
+/m/04_tv	/people/profession/specializations	/m/022qqh
+/m/0674cw	/award/award_winner/awards_won./award/award_honor/award	/m/024030
+/m/018zqj	/organization/organization/child./organization/organization_relationship/child	/m/018zsw
+/m/01mtt	/user/tsegaran/random/taxonomy_subject/entry./user/tsegaran/random/taxonomy_entry/taxonomy	/m/04n6k
+/m/0fkv5	/biology/organism_classification/rank	/m/0fl35
+/m/07bz5	/award/ranked_item/appears_in_ranked_lists./award/ranking/list	/m/0dlj8q2
+/m/046gm5	/people/family/country	/m/0d05w3
+/m/0kj0	/language/language_writing_system/languages	/m/01lqm
