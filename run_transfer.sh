@@ -31,12 +31,24 @@ then
 
 echo "Start Training......"
 
-CUDA_VISIBLE_DEVICES=$GPU_DEVICE python -u $CODE_PATH/run.py --do_train \
+echo "CUDA_VISIBLE_DEVICES=$GPU_DEVICE python -u $CODE_PATH/run.py --do_train \
+    --mask_old_embeddings \
     --cuda \
-    --init_checkpoint models/pRotatE_FB15k_1050/ \
-    --do_valid \
     --do_test \
-    --do_svd \
+    --data_path $FULL_DATA_PATH \
+    --model $MODEL \
+    -n $NEGATIVE_SAMPLE_SIZE -b $BATCH_SIZE -d $HIDDEN_DIM \
+    -g $GAMMA -a $ALPHA -adv \
+    -lr $LEARNING_RATE --max_steps $MAX_STEPS \
+    -save $SAVE --test_batch_size $TEST_BATCH_SIZE \
+    ${14} ${15} ${16} ${17} ${18} ${19} ${20}"
+
+exit 0
+
+CUDA_VISIBLE_DEVICES=$GPU_DEVICE python -u $CODE_PATH/run.py --do_train \
+    --mask_old_embeddings \
+    --cuda \
+    --do_test \
     --data_path $FULL_DATA_PATH \
     --model $MODEL \
     -n $NEGATIVE_SAMPLE_SIZE -b $BATCH_SIZE -d $HIDDEN_DIM \

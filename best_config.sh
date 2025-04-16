@@ -1,5 +1,6 @@
 # Best Configuration for RotatE
 #
+#bash run.sh train pRotatE FB15k_reduced_n20_deg 0 1000 1024 256 1000 24.0 1.0 0.0001 150000 16
 bash run.sh train RotatE FB15k 0 0 1024 256 1000 24.0 1.0 0.0001 150000 16 -de
 bash run.sh train RotatE FB15k-237 0 0 1024 256 1000 9.0 1.0 0.00005 100000 16 -de
 bash run.sh train RotatE wn18 0 0 512 1024 500 12.0 0.5 0.0001 80000 8 -de
@@ -12,7 +13,10 @@ bash run.sh train RotatE YAGO3-10 0 0 1024 400 500 24.0 1.0 0.0002 100000 4 -de
 # Best Configuration for pRotatE
 #
 bash run.sh train pRotatE FB15k 0 0 1024 256 1000 24.0 1.0 0.0001 150000 16
+# transfer learning assuming we pre-trained on 150000 training steps
 bash run.sh train pRotatE FB15k_reduced_n10_deg1 0 0 1024 256 1000 24.0 1.0 0.0001 150000 16
+bash run_transfer.sh train pRotatE FB15k_reduced_n10_deg1_merged 0 0 1024 256 1000 24.0 1.0 0.0001 200000 16 
+
 bash run.sh train pRotatE FB15k-237 0 0 1024 256 1000 9.0 1.0 0.00005 100000 16
 bash run.sh train pRotatE wn18 0 0 512 1024 500 12.0 0.5 0.0001 80000 8
 bash run.sh train pRotatE wn18rr 0 0 512 1024 500 6.0 0.5 0.00005 80000 8

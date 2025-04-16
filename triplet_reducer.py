@@ -16,7 +16,7 @@ def get_parser():
 
     parser.add_argument('--dataset', type=str, default="FB15k", help="Dataset from which you'd subsample")
     parser.add_argument('--n_ent', type=int, default=10, help="Number of entities to remove")
-    parser.add_argument('--degree_th', type=int, default=1, help="Remove entities with degree number degree_th")
+    parser.add_argument('--degree_th', type=int, default=0, help="Remove entities with degree number degree_th, if 0 it will select n_ent randomly")
 
     return parser.parse_args()
 
@@ -39,7 +39,7 @@ def create_directory(directory_path):
         print(f"Error creating directory '{directory_path}': {error}")
 
 
-def write2file(read_filename, write_filename, write_filename_removed, entities2remove):
+def write2file_reduced(read_filename, write_filename, write_filename_removed, entities2remove):
     with open(read_filename, "r") as read_file:
                 with open(write_filename, "w") as write_file:
                     with open(write_filename_removed, "w") as write_removed_file:
@@ -52,6 +52,36 @@ def write2file(read_filename, write_filename, write_filename_removed, entities2r
                                 write_removed_file.write(line)
                              
     print(f"File {read_filename} is succesfully re-writen into {write_filename}, and {write_filename_removed}")
+
+
+# ! This was not tested yet
+def write2file_extend_dict(read_filename, write_filename):
+    # Determine the starting index
+    try:
+        with open(write_filename, "r") as write_file:
+            lines = write_file.readlines()
+            if lines:
+                last_index = int(lines[-1].split()[0])  # Get the last index
+            else:
+                last_index = 0
+    except FileNotFoundError:
+        last_index = 0  # If the file doesn't exist, start from 0
+
+    # Read from read_filename and append to write_filename
+    with open(read_filename, "r") as read_file, open(write_filename, "a") as write_file:
+        for i, line in enumerate(read_file, start=last_index + 1):
+            write_file.write(f"{i}\t{line.split()[1]}\n")
+
+    print(f"File {write_filename} is successfully extended with {read_filename}")
+
+def write2file_extend_txt(read_filename, write_filename):
+    # Determine the starting index
+    with open(write_filename, "a") as write_file:
+        with open(read_filename, "r") as read_file:
+            for line in read_file:
+                write_file.write(line)
+
+    print(f"File {write_filename} is successfully extended with {read_filename}")
 
 
 # Load triplet dataset
@@ -86,6 +116,8 @@ class Dataset:
     def find_entity_by_degree(self, target_degree):
         return [key for key, value in self.dataset.items() if value == target_degree]
 
+    def find_entity_by_degree_range(self, lower=10, upper=500):
+        return [key for key, value in self.dataset.items() if value >= lower and value <= upper]
 
 if __name__ == "__main__":
     args = get_parser()
@@ -126,8 +158,12 @@ if __name__ == "__main__":
     create_directory(path2save)
 
     # remove entities
-    entities2remove = original_dataset.find_entity_by_degree(target_degree=args.degree_th)
-    entities2remove = get_random_sample(x=entities2remove, sample_size=args.n_ent)
+    if args.degree_th != 0:
+        entities2remove = original_dataset.find_entity_by_degree(target_degree=args.degree_th)
+        entities2remove = get_random_sample(x=entities2remove, sample_size=args.n_ent)
+    else:
+        entities2remove = original_dataset.find_entity_by_degree_range(lower=10, upper=1000)
+        entities2remove = get_random_sample(x=entities2remove, sample_size=args.n_ent)
 
     with open(os.path.join(path2save, "entities2remove.dict"), "w") as write_file:
         for i, e in enumerate(entities2remove):
@@ -138,24 +174,24 @@ if __name__ == "__main__":
     
     # Save
     print(f"Processing train set...")
-    write2file(
+    write2file_reduced(
          read_filename=os.path.join(path2datasets, train_filename),
          write_filename=os.path.join(path2save, train_filename),
          write_filename_removed=os.path.join(path2save, train_filename.split(".")[0]+"_removed.txt"),
          entities2remove=entities2remove
     ) 
     print(f"Processing test set...")
-    write2file(
+    write2file_reduced(
          read_filename=os.path.join(path2datasets, test_filename),
          write_filename=os.path.join(path2save, test_filename),
          write_filename_removed=os.path.join(path2save, test_filename.split(".")[0]+"_removed.txt"),
          entities2remove=entities2remove
     ) 
     print(f"Processing valid set...")
-    write2file(
+    write2file_reduced(
          read_filename=os.path.join(path2datasets, valid_filename),
          write_filename=os.path.join(path2save, valid_filename),
-         write_filename_removed=os.path.join(path2save, test_filename.split(".")[0]+"_removed.txt"),
+         write_filename_removed=os.path.join(path2save, valid_filename.split(".")[0]+"_removed.txt"),
          entities2remove=entities2remove
     )
 
@@ -172,3 +208,32 @@ if __name__ == "__main__":
                 if ent not in entities2remove:
                     write_file.write(f"{i}\t{ent}\n")
                     i+=1
+
+    # Create another folder in the path2save, that will contain a dataset 
+    # with newly added entites
+    path2save_merged = os.path.join(path2save+"_merged")
+    create_directory(path2save_merged) 
+
+    # add files
+    shutil.copy(os.path.join(path2save, "relations.dict"), os.path.join(path2save_merged, "relations.dict"))
+    shutil.copy(os.path.join(path2save, "entities.dict"), os.path.join(path2save_merged, "entities.dict"))
+    shutil.copy(os.path.join(path2save, "train.txt"), os.path.join(path2save_merged, "train.txt"))
+    shutil.copy(os.path.join(path2save, "test.txt"), os.path.join(path2save_merged, "test.txt"))
+    shutil.copy(os.path.join(path2save, "valid.txt"), os.path.join(path2save_merged, "valid.txt"))
+
+    write2file_extend_dict(
+        read_filename=os.path.join(path2save, "entities2remove.dict"),
+        write_filename=os.path.join(path2save_merged, "entities.dict"),
+    )
+    write2file_extend_txt(
+        read_filename=os.path.join(path2save, "train_removed.txt"),
+        write_filename=os.path.join(path2save_merged, "train.txt"),
+    )
+    write2file_extend_txt(
+        read_filename=os.path.join(path2save, "test_removed.txt"),
+        write_filename=os.path.join(path2save_merged, "test.txt"),
+    )
+    write2file_extend_txt(
+        read_filename=os.path.join(path2save, "valid_removed.txt"),
+        write_filename=os.path.join(path2save_merged, "valid.txt"),
+    )

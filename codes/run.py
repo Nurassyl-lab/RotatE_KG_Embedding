@@ -7,11 +7,12 @@ from __future__ import print_function
 import argparse
 import json
 import logging
-import os
+import os, sys
 import random
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 from torch.utils.data import DataLoader
 
@@ -27,13 +28,14 @@ def parse_args(args=None):
     )
 
     parser.add_argument('--cuda', action='store_true', help='use GPU')
-    
     parser.add_argument('--do_train', action='store_true')
     parser.add_argument('--do_valid', action='store_true')
     parser.add_argument('--do_test', action='store_true')
     parser.add_argument('--do_normalize', action='store_true')
+    parser.add_argument('--do_svd', action='store_true')
     parser.add_argument('--do_generate_embeddings', action='store_true', help='Generate embeddings for the given triples')
     parser.add_argument('--evaluate_train', action='store_true', help='Evaluate on training data')
+    parser.add_argument('--mask_old_embeddings', action='store_true', help='Freeze gradients of old embeddings')
     
     parser.add_argument('--countries', action='store_true', help='Use Countries S1/S2/S3 datasets')
     parser.add_argument('--regions', type=int, nargs='+', default=None, 
@@ -122,6 +124,16 @@ def read_triple(file_path, entity2id, relation2id):
     '''
     Read triples and map them into ids.
     '''
+    # print("Reading triples from %s" % file_path)
+    # # print first element in the entity2id dict
+    # print("First entity in the dictionary: ", list(entity2id.keys())[0])
+    # print(f"Length of keys in the entity2id dict: {len(entity2id.keys())}")
+    # print(f"First 5 keys in the entity2id dict: {list(entity2id.keys())[:5]}")
+    # # print first element in the relation2id dict
+    # print("First relation in the dictionary: ", list(relation2id.keys())[0])
+    # print(f"Length of keys in the relation2id dict: {len(relation2id.keys())}")
+    # print(f"First 5 keys in the relation2id dict: {list(relation2id.keys())[:5]}")
+    # sys.exit()
     triples = []
     with open(file_path) as fin:
         for line in fin:
@@ -215,21 +227,33 @@ def main(args):
     valid_triples = read_triple(os.path.join(args.data_path, 'valid.txt'), entity2id, relation2id)
     logging.info('#valid: %d' % len(valid_triples))
     test_triples = read_triple(os.path.join(args.data_path, 'test.txt'), entity2id, relation2id)
+    # test_triples = read_triple(os.path.join("data/FB15k_reduced_n100_deg0", 'test_removed.txt'), entity2id, relation2id)
     logging.info('#test: %d' % len(test_triples))
     
     #All true triples
     all_true_triples = train_triples + valid_triples + test_triples
     
-    kge_model = KGEModel(
-        model_name=args.model,
-        nentity=nentity,
-        nrelation=nrelation,
-        hidden_dim=args.hidden_dim,
-        gamma=args.gamma,
-        double_entity_embedding=args.double_entity_embedding,
-        double_relation_embedding=args.double_relation_embedding
-    )
-    
+    if not args.mask_old_embeddings:
+        kge_model = KGEModel(
+            model_name=args.model,
+            nentity=nentity,
+            nrelation=nrelation,
+            hidden_dim=args.hidden_dim,
+            gamma=args.gamma,
+            double_entity_embedding=args.double_entity_embedding,
+            double_relation_embedding=args.double_relation_embedding
+        )
+    else:
+        kge_model = KGEModel(
+            model_name=args.model,
+            nentity=nentity-100, # ! This should be automated
+            nrelation=nrelation,
+            hidden_dim=args.hidden_dim,
+            gamma=args.gamma,
+            double_entity_embedding=args.double_entity_embedding,
+            double_relation_embedding=args.double_relation_embedding
+        )   
+
     logging.info('Model Parameter Configuration:')
     for name, param in kge_model.named_parameters():
         logging.info('Parameter %s: %s, require_grad = %s' % (name, str(param.size()), str(param.requires_grad)))
@@ -274,14 +298,37 @@ def main(args):
         checkpoint = torch.load(os.path.join(args.init_checkpoint, 'checkpoint'))
         init_step = checkpoint['step']
         kge_model.load_state_dict(checkpoint['model_state_dict'])
-        if args.do_train:
+        if args.do_train and not args.mask_old_embeddings: # assuming if mask old embeddings is True, we want to perform transfer learning
             current_learning_rate = checkpoint['current_learning_rate']
             warm_up_steps = checkpoint['warm_up_steps']
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     else:
         logging.info('Ramdomly Initializing %s Model...' % args.model)
         init_step = 0
-    
+
+    # TODO: improve
+    if args.mask_old_embeddings:
+        # old_entity_embedding = kge_model.entity_embedding.detach().clone()
+        # n_old = old_entity_embedding.size(0)
+        # n_new = 10
+        # entity_dim = old_entity_embedding.size(1)
+        # new_embedding = torch.empty(n_new, entity_dim, device=old_entity_embedding.device)
+        # nn.init.uniform_(new_embedding, a=-kge_model.embedding_range.item(), b=kge_model.embedding_range.item())
+        # extended_entity_embedding = torch.cat([old_entity_embedding, new_embedding], dim=0)
+        # kge_model.entity_embedding = nn.Parameter(extended_entity_embedding)
+        # kge_model.nentity = kge_model.entity_embedding.size(0)
+
+        old_entity_embedding = kge_model.entity_embedding.detach().clone()
+        old_entity_embedding = old_entity_embedding.to(kge_model.entity_embedding.device)
+        n_old = old_entity_embedding.size(0)
+        n_new = 100
+        entity_dim = old_entity_embedding.size(1)
+        new_embedding = torch.empty(n_new, entity_dim, device=old_entity_embedding.device)
+        nn.init.uniform_(new_embedding, a=-kge_model.embedding_range.item(), b=kge_model.embedding_range.item())
+        extended_entity_embedding = torch.cat([old_entity_embedding, new_embedding], dim=0)
+        kge_model.entity_embedding = nn.Parameter(extended_entity_embedding)
+        kge_model.nentity = kge_model.entity_embedding.size(0)
+
     step = init_step
     
     logging.info('Start Training...')
@@ -303,24 +350,10 @@ def main(args):
         
         #Training Loop
         for step in range(init_step, args.max_steps):
-            
-            log = kge_model.train_step(kge_model, optimizer, train_iterator, args)
-
-            # Log entity embeddings every 10000 steps
-            if step % 10000 == 0:
-                entity_embeddings = kge_model.entity_embedding.detach().cpu().numpy()
-                entity_embeddings = entity_embeddings[:, entity_embeddings.shape[1]//2:] + 1j*entity_embeddings[:, :entity_embeddings.shape[1]//2]
-                ent1 = entity_embeddings[0, :]
-                ent1000 = entity_embeddings[1000, :]
-                ent5000 = entity_embeddings[5000, :]
-
-                avg_feature_magnitude1 = np.mean(np.abs(ent1))
-                avg_feature_magnitude1000 = np.mean(np.abs(ent1000))
-                avg_feature_magnitude5000 = np.mean(np.abs(ent5000))
-
-                logging.info('Entity embeddings 1 at step %d: %s' % (step, avg_feature_magnitude1))
-                logging.info('Entity embeddings 1000 at step %d: %s' % (step, avg_feature_magnitude1000))
-                logging.info('Entity embeddings 5000 at step %d: %s' % (step, avg_feature_magnitude5000))
+            if not args.mask_old_embeddings: 
+                log = kge_model.train_step(kge_model, optimizer, train_iterator, args)
+            else:
+                log = kge_model.train_step(kge_model, optimizer, train_iterator, args, n_old=n_old)
 
             training_logs.append(log)
             
@@ -367,7 +400,6 @@ def main(args):
     
     if args.do_test:
         logging.info('Evaluating on Test Dataset...')
-        
         if args.do_normalize:
             logging.info('Normalizing Entity Embeddings...')
             # normalize entity embeddings
@@ -386,6 +418,10 @@ def main(args):
             print(np.mean(np.abs(ent[1000, :ent.shape[1]//2] + 1j* ent[1000, ent.shape[1]//2:])))
             print(np.mean(np.abs(ent[3000, :ent.shape[1]//2] + 1j* ent[3000, ent.shape[1]//2:])))
 
+        if args.do_svd:
+            logging.info('Computing SVD...')
+            kge_model.svd_and_normalize_entity_emd(kge_model, reduced_dim=250)
+
         metrics = kge_model.test_step(kge_model, test_triples, all_true_triples, args)
         log_metrics('Test', step, metrics)
     
@@ -397,8 +433,9 @@ def main(args):
     if args.do_generate_embeddings:
         logging.info('Generating embeddings for the given triples...')
         entity_embeddings, rel_embeddings = kge_model.generate_embeddings(kge_model, args)
-        np.save('Embeddings/pRotatE_1000_Entity_Embeddings_FB15k_reduced_n10_deg1.npy', entity_embeddings)
-        np.save('Embeddings/pRotatE_1000_Relation_Embeddings_FB15k_reduced_n10_deg1.npy', rel_embeddings)
+        print(f"Embedding range is {kge_model.embedding_range.item()}")
+        np.save('Embeddings/pRotatE_1000_Entity_Embeddings_FB15k.npy', entity_embeddings)
+        np.save('Embeddings/pRotatE_1000_Relation_Embeddings_FB15k.npy', rel_embeddings)
         
 if __name__ == '__main__':
     main(parse_args())

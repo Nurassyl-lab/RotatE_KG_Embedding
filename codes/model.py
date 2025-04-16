@@ -20,6 +20,19 @@ from dataloader import TestDataset
 
 import sys
 
+from sklearn.decomposition import TruncatedSVD
+from scipy.stats import pearsonr
+from sklearn.kernel_approximation import RBFSampler
+
+def rbf_feature_map(emb: np.ndarray, gamma: float, n_components: int):
+    """
+    Approximate RBF kernel φ(x) via Random Fourier Features.
+    Returns φ(X) and the fitted RBFSampler.
+    """
+    sampler = RBFSampler(gamma=gamma, n_components=n_components, random_state=42)
+    feats = sampler.fit_transform(emb)
+    return feats, sampler
+
 class KGEModel(nn.Module):
     def __init__(self, model_name, nentity, nrelation, hidden_dim, gamma, 
                  double_entity_embedding=False, double_relation_embedding=False):
@@ -259,8 +272,14 @@ class KGEModel(nn.Module):
         score = self.gamma.item() - score.sum(dim = 2) * self.modulus
         return score
     
+    def freeze_old_embeddings_hook(grad, n_old):
+        # Create a mask with zeros for old embeddings and ones for new embeddings
+        mask = torch.ones_like(grad)
+        mask[:n_old] = 0  # Freeze pre-trained embeddings
+        return grad * mask
+    
     @staticmethod
-    def train_step(model, optimizer, train_iterator, args):
+    def train_step(model, optimizer, train_iterator, args, n_old=None):
         '''
         A single train step. Apply back-propation and return the loss
         '''
@@ -310,6 +329,16 @@ class KGEModel(nn.Module):
             regularization_log = {}
             
         loss.backward()
+
+        # freeze old embeddings by
+        # zero gradients for the pre-trained embeddings (first n_old rows)
+        if args.mask_old_embeddings:
+            if model.entity_embedding.grad is not None:
+                model.entity_embedding.grad[:n_old].zero_()
+
+        # train using compression SVD
+        if args.do_svd:
+            model = KGEModel.svd_emd(model, 50)
 
         optimizer.step()
 
@@ -513,4 +542,85 @@ class KGEModel(nn.Module):
 
         # Update back into the model
         model.entity_embedding.data = normalized_embeddings
+        return model
+    
+    @staticmethod
+    def svd_and_normalize_entity_emd(model, reduced_dim):
+        """
+        Apply SVD to reduce the dimensions of the entity embeddings and normalize the result.
+
+        Args:
+            model: The model containing the entity embeddings to be reduced.
+            reduced_dim: The target dimensionality after SVD reduction.
+
+        Returns:
+            model: The model with normalized and reduced embeddings.
+        """
+        pi = 3.14159265358979323846
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # Detach embeddings and convert to numpy array for SVD
+        entity_embeddings = model.entity_embedding.detach().cpu().numpy()
+        relation_embeddings = model.relation_embedding.detach().cpu().numpy()
+
+        # scale from -pi to pi
+        entity_embeddings = entity_embeddings/(model.embedding_range.item()/pi)
+        relation_embeddings = relation_embeddings/(model.embedding_range.item()/pi)
+
+        # Perform SVD for dimensionality reduction
+        svd_entity = TruncatedSVD(n_components=reduced_dim, random_state=42)
+        svd_relation = TruncatedSVD(n_components=reduced_dim, random_state=42)
+        reduced_embeddings_entity = svd_entity.fit_transform(entity_embeddings)
+        reduced_embeddings_relation = svd_relation.fit_transform(relation_embeddings)
+
+        # Convert reduced embeddings back to a torch tensor
+        entity_embeddings = torch.tensor(reduced_embeddings_entity, dtype=torch.float32)
+        relation_embeddings = torch.tensor(reduced_embeddings_relation, dtype=torch.float32)
+
+        # * (Optional) Reverse normalization from -pi to pi back to original scale
+        # entity_embeddings = entity_embeddings * (model.embedding_range.item() / pi)
+        # relation_embeddings = relation_embeddings * (model.embedding_range.item() / pi)
+
+        # * (Optional) Normalize the reduced embeddings (L2 normalization)
+        # norm = torch.norm(entity_embeddings, p=2, dim=1, keepdim=True)
+        # entity_embeddings = entity_embeddings / (norm + 1e-10)  # Add small epsilon to avoid division by zero
+        # norm = torch.norm(relation_embeddings, p=2, dim=1, keepdim=True)
+        # relation_embeddings = relation_embeddings / (norm + 1e-10)  # Add small epsilon to avoid division by zero
+
+        # Update the model with the normalized embeddings
+        model.entity_embedding.data = entity_embeddings.to(device)
+        model.relation_embedding.data = relation_embeddings.to(device)
+        return model
+    
+    @staticmethod
+    def svd_emd(model, reduced_dim):
+        """
+        Apply SVD to reduce the dimensions of the entity embeddings and project back to the original size.
+
+        Args:
+            model: The model containing the entity embeddings to be reduced.
+            reduced_dim: The target dimensionality after SVD reduction.
+
+        Returns:
+            model: The model with embeddings projected back to the original size.
+        """
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        entity_embeddings = model.entity_embedding.detach().cpu().numpy()
+        relation_embeddings = model.relation_embedding.detach().cpu().numpy()
+
+        # Perform SVD for dimensionality reduction
+        U_entity, S_entity, Vt_entity = np.linalg.svd(entity_embeddings, full_matrices=False)
+        U_relation, S_relation, Vt_relation = np.linalg.svd(relation_embeddings, full_matrices=False)
+
+        # Reduce dimensions
+        reduced_entity = np.dot(U_entity[:, :reduced_dim], np.diag(S_entity[:reduced_dim]))
+        reduced_relation = np.dot(U_relation[:, :reduced_dim], np.diag(S_relation[:reduced_dim]))
+
+        # Project back to the original size
+        projected_entity = np.dot(reduced_entity, Vt_entity[:reduced_dim, :])
+        projected_relation = np.dot(reduced_relation, Vt_relation[:reduced_dim, :])
+
+        # Convert back to torch tensors
+        model.entity_embedding.data = torch.tensor(projected_entity, dtype=torch.float32).to(device)
+        model.relation_embedding.data = torch.tensor(projected_relation, dtype=torch.float32).to(device)
+
         return model

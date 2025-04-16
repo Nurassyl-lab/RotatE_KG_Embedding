@@ -1,3 +1,4 @@
+.vscode/
 checkpoint
 *.npy
 *.log
@@ -9,3 +10,5 @@ models/
 phase_diff.json
 show_performance.py
 data/FB15k/FB15k_entity_degree.csv
+data/FB15k_reduced_n10_deg1/
+data/
